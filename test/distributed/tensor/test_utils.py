@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+from torch.autograd import Function
 from torch.distributed._local_tensor import (
     local_tensor_mode,
     LocalTensor,
@@ -938,13 +939,26 @@ class TestExplicitRedistribute(LocalTensorTestBase):
 
             dx = distribute_tensor(x, device_mesh, [Shard(0)])
             dA = distribute_tensor(A, device_mesh, [Replicate()])
-            with ExplicitRedistributionContext():
+            with ExplicitRedistributionContext(strict=True):
                 dY = torch.matmul(dx, dA_repl)
                 loss = dY.sum()
 
                 # we now see the error during backwards
                 with self.assertRaisesRegex(RuntimeError, "Implicit redistribution"):
-                    loss.backward()
+                    loss.backward(retain_graph=True)
+
+                with ExplicitRedistributionContext(strict=False):
+                    # but since it's a 'free' redistribute, we can still do it under non-strict mode
+                    loss.backward(retain_graph=True)
+
+                with ExplicitRedistributionContext(enable=False):
+                    # and we can disable
+                    loss.backward(retain_graph=True)
+
+                # and re-enable
+                with self.assertRaisesRegex(RuntimeError, "Implicit redistribution"):
+                    loss.backward(retain_graph=True)
+
 
 
 if __name__ == "__main__":
