@@ -43,6 +43,21 @@ minimum_call_count = 1
 # turn on/off DCE pass (deprecated: always true)
 dead_code_elimination = True
 
+# Enable or disable side effect replay after graph execution.
+# When False, mutations to Python objects (lists, dicts, attributes) won't be
+# replayed after the compiled graph runs. This can cause correctness issues
+# if your code depends on these mutations being visible. This should probably
+# never be False by default. At the moment, only export will need it.
+# [@compile_ignored: runtime_behaviour]
+replay_side_effects = True
+
+# Configure side effect warning level
+# If 1, we silently allow side effects
+# If 2, we warn side effects
+# If 3, we error on side effects
+# [@compile_ignored: runtime_behaviour]
+side_effect_replay_policy = 1
+
 # disable (for a function) when cache reaches this size
 
 # controls the maximum number of cache entries with a guard on same ID_MATCH'd
