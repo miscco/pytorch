@@ -12,7 +12,7 @@ from os import PathLike
 from pathlib import Path
 from threading import Lock
 from time import time
-from typing import Any, TYPE_CHECKING, TypeAlias
+from typing import Any, Concatenate, TYPE_CHECKING, TypeAlias
 from typing_extensions import override
 
 from . import config, context, exceptions, implementations as impls, locks
@@ -206,8 +206,8 @@ class _CacheIntf(ABC):
         fn: Callable[P, R],
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> Callable[P, R]:
         pass
 
@@ -218,7 +218,7 @@ class _CacheIntf(ABC):
         params: Params,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> impls.Hit | None:
         pass
 
@@ -230,7 +230,7 @@ class _CacheIntf(ABC):
         result: R,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
     ) -> bool:
         pass
 
@@ -260,7 +260,7 @@ class _CacheIntf(ABC):
         params: Params,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> impls.Hit | None:
         if not config.IS_CACHING_MODULE_ENABLED():
             return None
@@ -294,7 +294,7 @@ class _CacheIntf(ABC):
         result: R,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
     ) -> bool:
         if not config.IS_CACHING_MODULE_ENABLED():
             return False
@@ -371,8 +371,8 @@ class _FastCacheIntf(_CacheIntf):
         fn: Callable[P, R],
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> Callable[P, R]:
         @wraps(fn)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -436,7 +436,7 @@ class _FastCacheIntf(_CacheIntf):
         params: Params,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> impls.Hit | None:
         key: Any = self._make_key(
             fn, params, ischema=ischema, custom_params_encoder=custom_params_encoder
@@ -450,14 +450,18 @@ class _FastCacheIntf(_CacheIntf):
                 imc_get: impls.Hit | None = self._imc.get(key)
                 if imc_get:
                     if custom_result_decoder:
-                        return impls.Hit(value=custom_result_decoder(imc_get.value))
+                        return impls.Hit(
+                            value=custom_result_decoder(imc_get.value, params)
+                        )
                     else:
                         return imc_get
                 else:
                     odc_get: impls.Hit | None = odc.get(key)
                     if odc_get:
                         if custom_result_decoder:
-                            return impls.Hit(value=custom_result_decoder(odc_get.value))
+                            return impls.Hit(
+                                value=custom_result_decoder(odc_get.value, params)
+                            )
                         return odc_get
                 return None
             except exceptions.KeyEncodingError as err:
@@ -471,7 +475,7 @@ class _FastCacheIntf(_CacheIntf):
         result: R,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
     ) -> bool:
         key: Any = self._make_key(
             fn, params, ischema=ischema, custom_params_encoder=custom_params_encoder
@@ -482,7 +486,7 @@ class _FastCacheIntf(_CacheIntf):
                 encoded_result: Any = (
                     result
                     if not custom_result_encoder
-                    else custom_result_encoder(result)
+                    else custom_result_encoder(result, params)
                 )
                 # reverse order of get, as we don't want to memoize values
                 # if we haven't actually inserted them into the on-disk cache
@@ -604,8 +608,8 @@ class _DeterministicCacheIntf(_CacheIntf):
         fn: Callable[P, R],
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> Callable[P, R]:
         @wraps(fn)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -695,7 +699,7 @@ class _DeterministicCacheIntf(_CacheIntf):
         params: Params,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> impls.Hit | None:
         key: Any = self._make_key(
             fn, params, ischema=ischema, custom_params_encoder=custom_params_encoder
@@ -712,7 +716,9 @@ class _DeterministicCacheIntf(_CacheIntf):
                 imc_get: impls.Hit | None = self._imc.get(key)
                 if imc_get:
                     if custom_result_decoder:
-                        return impls.Hit(value=custom_result_decoder(imc_get.value))
+                        return impls.Hit(
+                            value=custom_result_decoder(imc_get.value, params)
+                        )
                     else:
                         return imc_get
                 elif not sc:
@@ -721,7 +727,9 @@ class _DeterministicCacheIntf(_CacheIntf):
                     sc_get: impls.Hit | None = sc.get(key)
                     if sc_get:
                         if custom_result_decoder:
-                            return impls.Hit(value=custom_result_decoder(sc_get.value))
+                            return impls.Hit(
+                                value=custom_result_decoder(sc_get.value, params)
+                            )
                         return sc_get
                     elif config.STRICTLY_CACHED_DETERMINISM:
                         raise exceptions.StrictDeterministicCachingKeyNotFoundError
@@ -737,7 +745,7 @@ class _DeterministicCacheIntf(_CacheIntf):
         result: R,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
     ) -> bool:
         if (
             config.STRICTLY_PRE_POPULATED_DETERMINISM
@@ -759,7 +767,7 @@ class _DeterministicCacheIntf(_CacheIntf):
                 encoded_result: Any = (
                     result
                     if not custom_result_encoder
-                    else custom_result_encoder(result)
+                    else custom_result_encoder(result, params)
                 )
                 # reverse order of get, as we don't want to memoize values
                 # if we haven't actually inserted them into the remote cache
@@ -784,7 +792,7 @@ class _DeterministicCacheIntf(_CacheIntf):
         params: Params,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_decoder: Callable[[Any], R] | None = None,
+        custom_result_decoder: Callable[[R, ...], R] | None = None,
     ) -> impls.Hit | None:
         if not config.IS_DETERMINISTIC_CACHING_ENABLED():
             raise exceptions.DeterministicCachingDisabledError
@@ -804,7 +812,7 @@ class _DeterministicCacheIntf(_CacheIntf):
         result: R,
         ischema: context.IsolationSchema | None = None,
         custom_params_encoder: Callable[P, Any] | None = None,
-        custom_result_encoder: Callable[[R], Any] | None = None,
+        custom_result_encoder: Callable[[Concatenate[Any, P]], Any] | None = None,
     ) -> bool:
         if not config.IS_DETERMINISTIC_CACHING_ENABLED():
             raise exceptions.DeterministicCachingDisabledError
